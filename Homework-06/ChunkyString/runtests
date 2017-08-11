@@ -1,0 +1,128 @@
+#!/bin/csh -f
+#
+# Usage: ./runtests one test-name
+#        ./runtests all
+#        ./runtests working
+
+set cpulimit    = 5s                    # Maximum time allowed (seconds)
+set heaplimit   = 5M                    # Max heap allowed (megs)
+                                        #  - not enforced on Mac OS X ;-(
+set stacklimit  = 5M                    # Max stack allowed (megs)
+set outputlimit = 100                   # Max lines of output allowed
+if ($?PLUGINDIR) then
+    set plugindir = $PLUGINDIR
+else
+    set plugindir = /cs/cs70/chunkystring   # Where to find the plugins
+endif
+
+if (`uname` == 'Darwin') then
+   set ext = bundle                     # Plugin extension on Mac OS X
+else
+   set ext = so                         # Plugin extension on Linix (knuth)
+   setenv LIBC_FATAL_STDERR_ 1          # Prevent garbage to /dev/tty
+endif
+
+set tests = ()
+mkdir -p results
+
+switch ($1)
+    case status:
+        rm -f results/.status
+        foreach testobj ($plugindir/*.$ext)
+           set test = $testobj:t
+           set test = $test:r
+           grep -l $test results/status.out > /dev/null
+           # If exit code is not 0, didn't find it
+           if ($status) then
+               set code = '?'
+           else
+               grep -l "$test 0" results/status.out > /dev/null
+               if ($status) then
+                   set code = '\!'
+               else
+                   set code = '.'
+               endif
+           endif
+           echo "$code $test" >> results/.status
+        end
+        if (`uname` == 'Darwin' && `uname -r` =~ '1[012].0.0') then
+            # Column seems to be broken on Macs prior to Mavericks, so we 
+            # need to lie and tell it that the terminal is 1.5 times is 
+            # actual width.
+            set cols = `stty -a < /dev/tty \
+                        | perl -lne 's/.*\D(\d+).*/$1 * 1.5/e; print; exit 0'`
+            column -c $cols < results/.status
+        else
+            column < results/.status
+        endif
+        exit 0
+   case all:
+       set tests = ($plugindir/*.$ext)
+       breaksw
+   case count:
+       set working = `grep " 0" results/status.out | wc -l`
+       echo "Working: $working"
+       set broken = `grep -v " 0" results/status.out | wc -l`
+       echo "Broken: $broken"
+       exit 0
+   case saveSet:
+       if (-e savedSet.out) rm savedSet.out
+       grep " 0" results/status.out > results/savedSet.out
+       echo "Saved current working set."
+       exit 0
+   case saved:
+       set tests = (`grep "string" results/savedSet.out  \
+                | perl -lpe 's{\ 0\z}{.'$ext'}; s{^}{'$plugindir'/}'`)
+       breaksw
+   case working:
+       set tests = (`grep " 0" results/status.out  \
+                | perl -lpe 's{\ 0\z}{.'$ext'}; s{^}{'$plugindir'/}'`)
+       breaksw
+   case one:
+       set tests = ($plugindir/$2.$ext)
+       echo $tests
+       if ("$2" != '' && -e $tests) breaksw
+   case *:
+       cat << EOF
+Usage: ./runtests one test-name
+       ./runtests all
+       ./runtests working
+       ./runtests saved
+       
+       ./runtests status
+       ./runtests count
+       ./runtests saveSet
+EOF
+       exit 1
+endsw
+
+echo "+++ About to test $#tests ChunkyString implementation(s)..."
+# Make sure the status file existsw
+touch results/status.out
+      
+foreach plugin ( $tests )
+   set basename = $plugin:r
+   set basename = $basename:t
+   # Add to status file if it doesn't already exist
+   grep -l $basename results/status.out > /dev/null
+   # If exit code is not 0, didn't find it
+   if ($status) echo "$basename 0" >> results/status.out
+   echo "+++ Testing $basename..."
+   #rm -f results/$basename.out.new
+   ( limit cputime $cpulimit ; \
+     limit datasize $heaplimit ; \
+     limit stacksize $stacklimit ; \
+     ./stringtest $plugin < /dev/null \
+       )
+   # Remember if the tests succeeded
+   set outCode = $status
+   # Modify results
+   sed s/$basename\ .\*/$basename\ $outCode/ < results/status.out \
+                                             > results/status.out.new
+   if ($status == 0) then # If sed succeeded, copy over
+        mv results/status.out.new results/status.out
+   else
+        rm results/status.out.new
+   endif
+   echo ''
+end

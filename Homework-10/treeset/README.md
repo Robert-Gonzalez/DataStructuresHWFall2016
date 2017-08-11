@@ -1,0 +1,1 @@
+The starter code directory is empty this week. Everything you need should either be in last week's assignment (and you can copy it over), or should be a file that you can write from scratch.
